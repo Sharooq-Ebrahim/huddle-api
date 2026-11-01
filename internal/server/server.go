@@ -15,6 +15,7 @@ import (
 	"huddle-api/internal/config"
 	"huddle-api/internal/database"
 	"huddle-api/internal/middleware"
+	"huddle-api/internal/user"
 )
 
 // Server encapsulates the HTTP router, server lifecycle, and dependencies.
@@ -25,6 +26,7 @@ type Server struct {
 	engine      *gin.Engine
 	httpServer  *http.Server
 	authHandler *auth.Handler
+	userHandler *user.Handler
 }
 
 // New constructs and configures a new Server instance.
@@ -38,10 +40,15 @@ func New(cfg *config.Config, db *database.DB, logger *slog.Logger) *Server {
 	engine := gin.New()
 
 	var authHandler *auth.Handler
+	var userHandler *user.Handler
 	if db != nil && db.Pool != nil {
 		authRepo := auth.NewRepository(db.Pool)
 		authService := auth.NewService(authRepo, cfg, logger)
 		authHandler = auth.NewHandler(authService)
+
+		userRepo := user.NewRepository(db.Pool)
+		userService := user.NewService(userRepo, logger)
+		userHandler = user.NewHandler(userService)
 	}
 
 	s := &Server{
@@ -50,6 +57,7 @@ func New(cfg *config.Config, db *database.DB, logger *slog.Logger) *Server {
 		logger:      logger,
 		engine:      engine,
 		authHandler: authHandler,
+		userHandler: userHandler,
 	}
 
 	s.setupMiddleware()
@@ -69,6 +77,11 @@ func New(cfg *config.Config, db *database.DB, logger *slog.Logger) *Server {
 // SetAuthHandler allows injecting a mock or configured auth handler (useful for unit testing).
 func (s *Server) SetAuthHandler(h *auth.Handler) {
 	s.authHandler = h
+}
+
+// SetUserHandler allows injecting a mock or configured user handler (useful for unit testing).
+func (s *Server) SetUserHandler(h *user.Handler) {
+	s.userHandler = h
 }
 
 func (s *Server) setupMiddleware() {
@@ -109,7 +122,7 @@ func (s *Server) setupRoutes() {
 			c.JSON(http.StatusOK, gin.H{"message": "pong"})
 		})
 
-		// Mount auth routes if authHandler is available
+		// Mount unauthenticated auth routes
 		if s.authHandler != nil {
 			s.authHandler.RegisterRoutes(v1)
 		}
@@ -118,10 +131,10 @@ func (s *Server) setupRoutes() {
 		protected := v1.Group("")
 		protected.Use(middleware.AuthRequired(s.cfg.JWT_SECRET))
 		{
-			protected.GET("/auth/me", func(c *gin.Context) {
-				userID, _ := middleware.GetUserID(c)
-				c.JSON(http.StatusOK, gin.H{"user_id": userID})
-			})
+			// Mount protected user profile routes
+			if s.userHandler != nil {
+				s.userHandler.RegisterRoutes(protected)
+			}
 		}
 	}
 }
