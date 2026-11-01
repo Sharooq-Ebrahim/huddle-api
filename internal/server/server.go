@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"huddle-api/internal/apperror"
+	"huddle-api/internal/auth"
 	"huddle-api/internal/config"
 	"huddle-api/internal/database"
 	"huddle-api/internal/middleware"
@@ -18,11 +19,12 @@ import (
 
 // Server encapsulates the HTTP router, server lifecycle, and dependencies.
 type Server struct {
-	cfg        *config.Config
-	db         *database.DB
-	logger     *slog.Logger
-	engine     *gin.Engine
-	httpServer *http.Server
+	cfg         *config.Config
+	db          *database.DB
+	logger      *slog.Logger
+	engine      *gin.Engine
+	httpServer  *http.Server
+	authHandler *auth.Handler
 }
 
 // New constructs and configures a new Server instance.
@@ -35,11 +37,19 @@ func New(cfg *config.Config, db *database.DB, logger *slog.Logger) *Server {
 
 	engine := gin.New()
 
+	var authHandler *auth.Handler
+	if db != nil && db.Pool != nil {
+		authRepo := auth.NewRepository(db.Pool)
+		authService := auth.NewService(authRepo, cfg, logger)
+		authHandler = auth.NewHandler(authService)
+	}
+
 	s := &Server{
-		cfg:    cfg,
-		db:     db,
-		logger: logger,
-		engine: engine,
+		cfg:         cfg,
+		db:          db,
+		logger:      logger,
+		engine:      engine,
+		authHandler: authHandler,
 	}
 
 	s.setupMiddleware()
@@ -54,6 +64,11 @@ func New(cfg *config.Config, db *database.DB, logger *slog.Logger) *Server {
 	}
 
 	return s
+}
+
+// SetAuthHandler allows injecting a mock or configured auth handler (useful for unit testing).
+func (s *Server) SetAuthHandler(h *auth.Handler) {
+	s.authHandler = h
 }
 
 func (s *Server) setupMiddleware() {
@@ -87,12 +102,27 @@ func (s *Server) setupRoutes() {
 	// Readiness check: Are all dependencies (PostgreSQL) ready to accept traffic?
 	s.engine.GET("/readyz", s.handleReadyz)
 
-	// API v1 route group placeholder for future phases
+	// API v1 route group
 	v1 := s.engine.Group("/api/v1")
 	{
 		v1.GET("/ping", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"message": "pong"})
 		})
+
+		// Mount auth routes if authHandler is available
+		if s.authHandler != nil {
+			s.authHandler.RegisterRoutes(v1)
+		}
+
+		// Protected routes group requiring valid Bearer JWT
+		protected := v1.Group("")
+		protected.Use(middleware.AuthRequired(s.cfg.JWT_SECRET))
+		{
+			protected.GET("/auth/me", func(c *gin.Context) {
+				userID, _ := middleware.GetUserID(c)
+				c.JSON(http.StatusOK, gin.H{"user_id": userID})
+			})
+		}
 	}
 }
 

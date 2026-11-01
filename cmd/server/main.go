@@ -17,8 +17,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Load configuration
-	cfg, err := config.Load()
+	// Load configuration (reading .env if present)
+	cfg, err := config.Load(".env")
 
 	slog.Info("config loaded", slog.Any("config", cfg))
 	if err != nil {
