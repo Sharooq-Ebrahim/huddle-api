@@ -13,6 +13,7 @@ import (
 	"huddle-api/internal/apperror"
 	"huddle-api/internal/auth"
 	"huddle-api/internal/config"
+	"huddle-api/internal/conversation"
 	"huddle-api/internal/database"
 	"huddle-api/internal/middleware"
 	"huddle-api/internal/user"
@@ -27,6 +28,7 @@ type Server struct {
 	httpServer  *http.Server
 	authHandler *auth.Handler
 	userHandler *user.Handler
+	convHandler *conversation.Handler
 }
 
 // New constructs and configures a new Server instance.
@@ -41,6 +43,7 @@ func New(cfg *config.Config, db *database.DB, logger *slog.Logger) *Server {
 
 	var authHandler *auth.Handler
 	var userHandler *user.Handler
+	var convHandler *conversation.Handler
 	if db != nil && db.Pool != nil {
 		authRepo := auth.NewRepository(db.Pool)
 		authService := auth.NewService(authRepo, cfg, logger)
@@ -49,6 +52,10 @@ func New(cfg *config.Config, db *database.DB, logger *slog.Logger) *Server {
 		userRepo := user.NewRepository(db.Pool)
 		userService := user.NewService(userRepo, logger)
 		userHandler = user.NewHandler(userService)
+
+		convRepo := conversation.NewRepository(db.Pool)
+		convService := conversation.NewService(convRepo, logger)
+		convHandler = conversation.NewHandler(convService)
 	}
 
 	s := &Server{
@@ -58,6 +65,7 @@ func New(cfg *config.Config, db *database.DB, logger *slog.Logger) *Server {
 		engine:      engine,
 		authHandler: authHandler,
 		userHandler: userHandler,
+		convHandler: convHandler,
 	}
 
 	s.setupMiddleware()
@@ -82,6 +90,11 @@ func (s *Server) SetAuthHandler(h *auth.Handler) {
 // SetUserHandler allows injecting a mock or configured user handler (useful for unit testing).
 func (s *Server) SetUserHandler(h *user.Handler) {
 	s.userHandler = h
+}
+
+// SetConversationHandler allows injecting a mock or configured conversation handler.
+func (s *Server) SetConversationHandler(h *conversation.Handler) {
+	s.convHandler = h
 }
 
 func (s *Server) setupMiddleware() {
@@ -134,6 +147,11 @@ func (s *Server) setupRoutes() {
 			// Mount protected user profile routes
 			if s.userHandler != nil {
 				s.userHandler.RegisterRoutes(protected)
+			}
+
+			// Mount protected conversation routes
+			if s.convHandler != nil {
+				s.convHandler.RegisterRoutes(protected)
 			}
 		}
 	}
